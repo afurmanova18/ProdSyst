@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement;
 
 namespace prsyst
 {
@@ -21,6 +22,7 @@ namespace prsyst
                 Consequences = consequences;
             }
 
+            //можно ли применить правило( на основе известных)
             public bool IsApplicable(HashSet<Fact> facts)
             {
                 foreach (Fact cond in Conditions)
@@ -31,6 +33,11 @@ namespace prsyst
                 }
 
                 return true;
+            }
+
+            public bool HasConsequence(Fact possibleConsequence)
+            {
+                return Consequences.Contains(possibleConsequence);
             }
 
             public override string ToString()
@@ -88,12 +95,14 @@ namespace prsyst
             rules = LoadRulesFromFile("rules.txt", ParseFactsFromFile("facts.txt"));
         }
 
-        public void Deduce(HashSet<Fact> startingFacts)
-        {
 
+
+        public void Direct(HashSet<Fact> startingFacts, Fact targetFact)
+        {
             HashSet<Fact> currentFacts = new HashSet<Fact>(startingFacts);
             HashSet<Fact> newFacts = new HashSet<Fact>();
             bool changes;
+            bool targetReached = false;
 
             do
             {
@@ -105,12 +114,12 @@ namespace prsyst
                     {
                         foreach (var consequence in rule.Consequences)
                         {
-                            if (!currentFacts.Contains(consequence))
+                            if (!currentFacts.Contains(consequence))// если факта еще нет 
                             {
                                 newFacts.Add(consequence);
                                 changes = true;
 
-                                bool firstCondition = true;
+                                bool firstCondition = true;// чтобы запятая не ставилась в конце 
                                 foreach (var condition in rule.Conditions)
                                 {
                                     if (!firstCondition)
@@ -121,9 +130,17 @@ namespace prsyst
                                     firstCondition = false;
                                 }
                                 textBox1.AppendText(" -> " + consequence.Name + Environment.NewLine);
+
+                                // Проверка, достигнут ли целевой факт
+                                if (consequence.Equals(targetFact))
+                                {
+                                    targetReached = true;
+                                    break;
+                                }
                             }
                         }
                     }
+                    if (targetReached) break;
                 }
 
                 foreach (var fact in newFacts)
@@ -133,11 +150,17 @@ namespace prsyst
 
                 newFacts.Clear();
 
-            } while (changes);
+            } while (changes && !targetReached);
 
+            if (targetReached)
+            {
+                textBox1.AppendText("Целевой факт " + targetFact.Name + " достигнут!" + Environment.NewLine);
+            }
+            else
+            {
+                textBox1.AppendText("Целевой факт " + targetFact.Name + " не достигнут." + Environment.NewLine);
+            }
         }
-
-
 
         public List<Rule> LoadRulesFromFile(string filePath, HashSet<Fact> allFacts)
         {
@@ -184,7 +207,7 @@ namespace prsyst
                 string trimmedFactId = factId.Trim();
                 if (!string.IsNullOrEmpty(trimmedFactId))
                 {
-                
+
                     Fact existingFact = allFacts.FirstOrDefault(f => f.Id == trimmedFactId);
 
 
@@ -271,7 +294,36 @@ namespace prsyst
                     }
                 }
             }
-            Deduce(selectedFacts);
+
+
+            Fact targetFact = null;
+
+            foreach (var item in checkedListBox2.CheckedItems)
+            {
+                string selectedItem = item.ToString();
+                string[] parts = selectedItem.Split(';');
+
+                if (parts.Length == 2)
+                {
+                    string id = parts[0];
+                    string name = parts[1];
+
+                    targetFact = new Fact(id, name);
+                    break; // один целевой
+                }
+            }
+
+            if (targetFact != null)
+            {
+
+                Direct(selectedFacts, targetFact);
+            }
+            else
+            {
+                MessageBox.Show("Вы не выбрали целевой факт!");
+            }
+
+
 
 
         }
@@ -281,17 +333,17 @@ namespace prsyst
         {
             foreach (Rule rule in rules)
             {
-                foreach (var item in rule.Conditions )
+                foreach (var item in rule.Conditions)
                 {
                     textBox2.Text += item.Name.ToString() + " ";
                 }
                 textBox2.Text += "-> ";
 
-                foreach(var item in rule.Consequences)
+                foreach (var item in rule.Consequences)
                 {
                     textBox2.Text += item.Name + Environment.NewLine;
                 }
-              
+
             }
         }
 
@@ -301,6 +353,144 @@ namespace prsyst
         {
             List<Rule> rules = LoadRulesFromFile("rules.txt", ParseFactsFromFile("facts.txt"));
             AddRulesToTextBox(rules);
+        }
+
+        public void Backward(Fact targetFact, HashSet<Fact> startingFacts)
+        {
+
+            List<Rule> appliedRules = new List<Rule>();
+            HashSet<Fact> provenFacts = new HashSet<Fact>(startingFacts);
+            HashSet<Fact> visitedFacts = new HashSet<Fact>(); //  для отслеживания посещенных фактов
+            bool targetReached = BackwardChain(targetFact, provenFacts, appliedRules, visitedFacts);
+
+            if (targetReached)
+            {
+                textBox1.AppendText("Правила, приводящие к целевому факту " + targetFact.Name + ":" + Environment.NewLine);
+                foreach (var rule in appliedRules)
+                {
+                    foreach (var item in rule.Conditions)
+                    {
+                        textBox1.AppendText( item.Name +" ");
+                    }
+
+                    textBox1.AppendText("->");
+
+                    foreach (var item in rule.Consequences)
+                    {
+                        textBox1.AppendText(item.Name + Environment.NewLine);
+                    }
+                }
+            }
+            else
+            {
+                textBox1.AppendText("Не удалось найти цепочку правил, приводящую к целевому факту " + targetFact.Name + Environment.NewLine);
+            }
+        }
+
+        private bool BackwardChain(Fact targetFact, HashSet<Fact> provenFacts, List<Rule> appliedRules, HashSet<Fact> visitedFacts)
+        {
+            if (visitedFacts.Contains(targetFact))
+            {
+                // Обнаружен цикл 
+                return false;
+            }
+
+            visitedFacts.Add(targetFact);
+
+            if (provenFacts.Contains(targetFact))
+            {
+                return true; 
+            }
+
+            foreach (var rule in rules)
+            {
+                if (rule.HasConsequence(targetFact))
+                {
+                    bool conditionsSatisfied = true;
+
+                    foreach (var condition in rule.Conditions)
+                    {
+                        if (!BackwardChain(condition, provenFacts, appliedRules, new HashSet<Fact>(visitedFacts)))
+                        {
+                            conditionsSatisfied = false;
+                            break;
+                        }
+                    }
+                    //textBox1.Text += targetFact.Name;
+                    if (conditionsSatisfied)
+                    {
+                        appliedRules.Add(rule);
+                        provenFacts.Add(targetFact);
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+
+
+        private void backward_Click(object sender, EventArgs e)
+        {
+
+            HashSet<Fact> selectedFacts = new HashSet<Fact>();
+
+
+            for (int i = 0; i < checkedListBox1.Items.Count; i++)
+            {
+
+                if (checkedListBox1.GetItemChecked(i))
+                {
+                    string selectedItem = checkedListBox1.Items[i].ToString();
+
+
+                    string[] parts = selectedItem.Split(';');
+
+                    if (parts.Length == 2)
+                    {
+                        string id = parts[0];
+                        string name = parts[1];
+
+                        Fact selectedFact = new Fact(id, name);
+                        selectedFacts.Add(selectedFact);
+                    }
+                }
+            }
+
+
+            Fact targetFact = null;
+
+            foreach (var item in checkedListBox2.CheckedItems)
+            {
+                string selectedItem = item.ToString();
+                string[] parts = selectedItem.Split(';');
+
+                if (parts.Length == 2)
+                {
+                    string id = parts[0];
+                    string name = parts[1];
+
+                    targetFact = new Fact(id, name);
+                    break; // добавили целевой факт - один
+                }
+            }
+
+            if (targetFact != null)
+            {
+
+                Backward(targetFact, selectedFacts);
+            }
+            else
+            {
+                MessageBox.Show("Вы не выбрали целевой факт!");
+            }
+
+        }
+
+        private void checkedListBox2_SelectedIndexChanged(object sender, EventArgs e)
+        {
+
         }
     }
 
